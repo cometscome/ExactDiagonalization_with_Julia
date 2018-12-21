@@ -10,16 +10,23 @@
 
 module Exact
     import Combinatorics
+    using SparseArrays
+    using LinearAlgebra
+    using IterativeSolvers
 
     export exact_main!
 
 
+
     function exact_main!(U,μ,nx,ny,β,tri_periodic_x,tri_periodic_y,fulldiag,nfix)
 
-        const nc = nx*ny
-        const nf = 4^(nc)
-        const nup = div(nc,2)
-        const ndown = div(nc,2)
+        nc = nx*ny
+        nf = 4^(nc)
+        nup = div(nc,2)
+        ndown = div(nc,2)
+        eps = 1e-6
+        
+        
     
         println("Exact diagonalizatoin code")
         println("Nx x Ny: ",nx," x ",ny)
@@ -28,7 +35,7 @@ module Exact
         println( "μ:",μ)
         println( "Periodic boundary condision in x-direction:",tri_periodic_x)
         println( "Periodic boundary condision in y-direction:",tri_periodic_y)
-        const eps = 1e-6
+        
     
     
         if fulldiag
@@ -39,7 +46,7 @@ module Exact
 
             mat_h = const_h(nx,ny,nf,μ,U,mat_cvec,mat_cdvec,tri_periodic_x,tri_periodic_y)
             x = rand(nf)
-            x = x/sqrt(dot(x,x))
+            x = x/sqrt(x'*x)
             
             println("Time for calcualting eigenvalues:")
             @time λ = lobpcg(mat_h,x,nf,eps)
@@ -65,19 +72,26 @@ module Exact
             mat_hf = const_h(nx,ny,mf,μ,U,mat_cvecf,mat_cdvecf,tri_periodic_x,tri_periodic_y)
             #println(mat_hf)
             x = rand(mf)
-            x = x/sqrt(dot(x,x))
+            x = x/sqrt(x'*x)
             
         
             println( "----------------------------------------")
             println( "Full dense matrix mode: ")
             println("Time for calcualting eigenvalues:")    
-            @time λ= eigmin(full(mat_hf))
+            @time λ= eigmin(Matrix(mat_hf))
             println("Minimum Eigenvalue: ",λ)
             println( "----------------------------------------")
-            println( "Sparse matrix mode with the use of the LOBPCG: ")        
+            println( "Sparse matrix mode with the use of the LOBPCG: ")   
+            println("Time for calcualting eigenvalues with:")       
+            println("LOBPCG in IterativeSolvers")
+            @time r = lobpcg(mat_hf,false,1)
+            λ = r.λ[1]
+            println("Minimum Eigenvalue: ",λ)  
+            println("LOBPCG in this module")
             println("Time for calcualting eigenvalues with:")           
-            @time λ = lobpcg(mat_hf,x,mf,eps)
+            @time λ = lobpcg_DIY(mat_hf,x,mf,eps)
             println("Minimum Eigenvalue: ",λ)
+           
 
            
 
@@ -193,8 +207,8 @@ module Exact
     end
 
     function exact_init(nx,ny)
-        const nc = nx*ny
-        const nf = 4^nc
+        nc = nx*ny
+        nf = 4^nc
         mat_cvec = []
         #println(mat_cvec)
         mat_cdvec = []
@@ -213,7 +227,7 @@ module Exact
     end
 
     function exact_init_fix2(nx,ny,nup,ndown,mup,mdown)
-        const nc = nx*ny
+        nc = nx*ny
         mat_cvec = []
         #println(mat_cvec)
         mat_cdvec = []
@@ -221,7 +235,7 @@ module Exact
         baseup = collect(Combinatorics.combinations(cn,nup)) #We generate combinations. nc_C_nup
         
         basedown = collect(Combinatorics.combinations(cn,ndown))
-        basedown = map(x -> x +nc,basedown)
+        basedown = map(x -> x .+nc,basedown)
         mf = mup*mdown
     
         p = 0
@@ -238,7 +252,7 @@ module Exact
                 nup2 = nup 
                 ndown2 = ndown-1
                 annihilatebase = collect(Combinatorics.combinations(cn,ndown-1))    
-                annihilatebase=map(x -> x+nc,annihilatebase)
+                annihilatebase=map(x -> x .+nc,annihilatebase)
             end
             mup2 = binomial(nc, nup2) 
             mdown2 = binomial(nc, ndown2) 
@@ -274,8 +288,9 @@ module Exact
                         #println("vec_iout:",vec_iout)
                         b3 = calc_basis(ispin,vec_iout,nc)
                         #println(annihilatebase)
-                        #println("b3:",b3)
-                        inann = findfirst(annihilatebase,b3)
+#                        println("b3:",b3)
+                        inann = findnext(x->x==b3,annihilatebase,1)
+#                        inann = findfirst(annihilatebase,b3)
                         inann += -1
                         #println(inann)
                         if ispin == 1
@@ -299,7 +314,7 @@ module Exact
     end
 
     function calc_basis(ispin,vec_i,nc)
-        basis = []
+        basis = Int64[]
         for i in 1:nc
             j = vec_i[i+(ispin-1)*nc]
             if j != 0
@@ -322,8 +337,8 @@ module Exact
     end
 
     function calc_matc(isite,nx,ny,p)
-        const nc = nx*ny
-        const nf = 4^nc
+        nc = nx*ny
+        nf = 4^nc
         mat_c = spzeros(nf,nf)
         for jj in 1:nf
             vec_i = calc_ii2vec(jj,nc)
@@ -386,7 +401,7 @@ module Exact
     end
 
 
-    function lobpcg(A,x0,n,eps)
+    function lobpcg_DIY(A,x0,n,eps)
         #println("n",n)
         x = ones(Float64,n)
         x = x/sqrt(dot(x,x))
@@ -418,7 +433,7 @@ module Exact
 
             zhz[1:nz,1:nz] = ztemp[:,1:nz]'*A[:,:]*ztemp[:,1:nz]#ztemp[:,1:nz]'*z[:,1:nz]
             zhz[1:nz,1:nz] = (zhz[1:nz,1:nz]+zhz[1:nz,1:nz]')/2
-            (zλ[1:nz],zv[1:nz,1:nz]) = eig(zhz[1:nz,1:nz])
+            (zλ[1:nz],zv[1:nz,1:nz]) = eigen(zhz[1:nz,1:nz])
             v[1:nz,1] = zv[1:nz,1]
 
             λ = zλ[1]
