@@ -49,7 +49,9 @@ module Exact
             x = x/sqrt(x'*x)
             
             println("Time for calcualting eigenvalues:")
-            @time λ = lobpcg(mat_h,x,nf,eps)
+            @time r = lobpcg(mat_hf,false,1)
+            λ = r.λ[1]
+#            @time λ = lobpcg(mat_h,x,nf,eps)
             println("Minimum Eigenvalue: ",λ)
 
         end
